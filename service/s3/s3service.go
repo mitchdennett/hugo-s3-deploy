@@ -156,12 +156,14 @@ func (bucket *S3Bucket) UploadFile(bucketPrefix string, filePath string, dirPath
 	fileDirectory = strings.Replace(fileDirectory, dirPath+"/", "", 1)
 	key = bucketPrefix + fileDirectory
 	// Upload the file to the s3 given bucket
+	contentType := getFileContentType(filePath)
 	params := &s3.PutObjectInput{
-		Bucket: aws.String(bucket.Name), // Required
-		Key:    aws.String(key),         // Required
-		Body:   file,
+		Bucket:      aws.String(bucket.Name), // Required
+		Key:         aws.String(key),         // Required
+		Body:        file,
+		ContentType: aws.String(contentType),
 		Metadata: map[string]*string{
-			"Content-Type": aws.String(getFileContentType(file)),
+			"Content-Type": aws.String(contentType),
 		},
 	}
 	_, err = svc.PutObject(params)
@@ -172,13 +174,19 @@ func (bucket *S3Bucket) UploadFile(bucketPrefix string, filePath string, dirPath
 	}
 }
 
-func getFileContentType(out *os.File) string {
+func getFileContentType(filePath string) string {
+	out, err := os.Open(filePath)
+	if err != nil {
+		fmt.Println("Failed to open file", out, err)
+		os.Exit(1)
+	}
+	defer out.Close()
 
 	// Only the first 512 bytes are used to sniff the content type.
 	buffer := make([]byte, 512)
 
-	_, err := out.Read(buffer)
-	if err != nil {
+	_, readErr := out.Read(buffer)
+	if readErr != nil {
 		return ""
 	}
 
@@ -186,5 +194,5 @@ func getFileContentType(out *os.File) string {
 	// content-type by returning "application/octet-stream" if no others seemed to match.
 	contentType := http.DetectContentType(buffer)
 
-	return contentType
+	return strings.Split(contentType, ";")[0]
 }
