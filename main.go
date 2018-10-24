@@ -6,35 +6,96 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
-	"path/filepath"
-	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/mitchdennett/hugo-s3-deploy/service/acm"
+	"github.com/mitchdennett/hugo-s3-deploy/service/cloudfront"
+	"github.com/mitchdennett/hugo-s3-deploy/service/route53"
+	s3Service "github.com/mitchdennett/hugo-s3-deploy/service/s3"
 	"github.com/pelletier/go-toml"
 )
 
 var preserveDirStructureBool bool
+var bucketExists bool
+
+var bucketName string
+var domainName string
+var hostedZoneId string
+var region string
 
 func main() {
-	fmt.Println("Loading deploy.toml file...")
 	preserveDirStructureBool = true
+	fmt.Println("Loading deploy.toml file...")
 	dir, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	dat, err := ioutil.ReadFile(dir + "/deploy.toml")
-	if err != nil {
-		log.Fatal("Could not read deploy.toml file", err)
+	config := loadConfigToml(dir)
+	bucketName = config.Get("aws.bucketname").(string)
+	domainName = config.Get("aws.domain").(string)
+	hostedZoneId = config.Get("aws.hostedzoneid").(string)
+	region = config.Get("aws.region").(string)
+
+	sess, err := session.NewSession(&aws.Config{
+		Region:      aws.String(config.Get("aws.region").(string)),
+		Credentials: credentials.NewStaticCredentials(config.Get("aws.keyid").(string), config.Get("aws.secretkey").(string), ""),
+	})
+
+	bucket := s3Service.NewBucket(sess)
+	bucket.SetName(bucketName)
+	bucket.SetRegion(region)
+
+	cert := acm.NewCert(sess)
+	cert.SetDomainName(domainName)
+	cert.SetHostedZoneId(hostedZoneId)
+
+	dist := cloudfront.NewDistribution(sess)
+	dist.SetAliasName(domainName)
+	dist.SetRegion(region)
+	dist.SetBucket(bucket)
+
+	bucketExists = bucket.CreateOrRetrieve()
+
+	if !bucketExists {
+		fmt.Println("Requesting Cert....")
+		fmt.Println("=================================")
+		cert.Request(sess)
+		resourceRecord := cert.DescribeCertificate()
+
+		fmt.Println("Inserting Cert DNS Verification")
+		fmt.Println("=================================")
+		route53.InsertNewRecord(sess, cert, resourceRecord)
+
+		fmt.Println("Setting Bucket Policy....")
+		fmt.Println("=================================")
+		bucket.MakePublic()
+
+		fmt.Println("Setting up bucket for hosting....")
+		fmt.Println("=================================")
+		bucket.EnableWebHosting()
+
+		fmt.Println("Creating CloudFront Distribution....")
+		fmt.Println("=================================")
+		dist.CreateDistribution()
+
+		fmt.Println("Adding CloudFront Domain To DNS....")
+		fmt.Println("=================================")
+		route53.ChangeHostedZoneRecord(dist.DomainName, sess, domainName, hostedZoneId)
 	}
 
-	config, _ := toml.Load(string(dat))
+	fmt.Println("Building Hugo Site....")
+	fmt.Println("=================================")
+	buildHugoSite(dir)
 
-	fmt.Println("Building hugo site...")
+	fmt.Println("Uploading to S3 - ", bucketName)
+	fmt.Println("=================================")
+	bucket.UploadDirectory("", dir+"/public")
+}
+
+func buildHugoSite(dir string) {
 	cmd := exec.Command("hugo", "-t", "uilite", "-D")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -42,77 +103,14 @@ func main() {
 		log.Fatalf("cmd.hugo() failed with %s\n", err)
 	}
 	fmt.Printf("combined out:\n%s\n", string(out))
-
-	sess, err := session.NewSession(&aws.Config{
-		Region:      aws.String(config.Get("aws.region").(string)),
-		Credentials: credentials.NewStaticCredentials(config.Get("aws.keyid").(string), config.Get("aws.secretkey").(string), ""),
-	})
-
-	fmt.Println("Uploading to S3 - ", config.Get("aws.bucketname").(string))
-	fmt.Println("=================================")
-	uploadDirToS3(sess, config.Get("aws.bucketname").(string), "", dir+"/public")
-
 }
 
-func isDirectory(path string) bool {
-	fd, err := os.Stat(path)
+func loadConfigToml(dir string) *toml.Tree {
+	dat, err := ioutil.ReadFile(dir + "/deploy.toml")
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(2)
+		log.Fatal("Could not read deploy.toml file", err)
 	}
-	switch mode := fd.Mode(); {
-	case mode.IsDir():
-		return true
-	case mode.IsRegular():
-		return false
-	}
-	return false
-}
 
-func uploadDirToS3(sess *session.Session, bucketName string, bucketPrefix string, dirPath string) {
-	fileList := []string{}
-	filepath.Walk(dirPath, func(path string, f os.FileInfo, err error) error {
-		if isDirectory(path) {
-			return nil
-		} else {
-			fileList = append(fileList, path)
-			return nil
-		}
-	})
-
-	for _, file := range fileList {
-		uploadFileToS3(sess, bucketName, bucketPrefix, file, dirPath)
-	}
-}
-
-func uploadFileToS3(sess *session.Session, bucketName string, bucketPrefix string, filePath string, dirPath string) {
-	fmt.Println("upload " + filePath + " to S3")
-	// An s3 service
-	s3Svc := s3.New(sess)
-	file, err := os.Open(filePath)
-	if err != nil {
-		fmt.Println("Failed to open file", file, err)
-		os.Exit(1)
-	}
-	defer file.Close()
-	var key string
-	if preserveDirStructureBool {
-		fileDirectory, _ := filepath.Abs(filePath)
-		fileDirectory = strings.Replace(fileDirectory, dirPath+"/", "", 1)
-		key = bucketPrefix + fileDirectory
-	} else {
-		key = bucketPrefix + path.Base(filePath)
-	}
-	// Upload the file to the s3 given bucket
-	params := &s3.PutObjectInput{
-		Bucket: aws.String(bucketName), // Required
-		Key:    aws.String(key),        // Required
-		Body:   file,
-	}
-	_, err = s3Svc.PutObject(params)
-	if err != nil {
-		fmt.Printf("Failed to upload data to %s/%s, %s\n",
-			bucketName, key, err.Error())
-		return
-	}
+	config, _ := toml.Load(string(dat))
+	return config
 }
