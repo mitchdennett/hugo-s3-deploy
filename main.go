@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/mitchdennett/hugo-s3-deploy/service/acm"
 	"github.com/mitchdennett/hugo-s3-deploy/service/cloudfront"
+	"github.com/mitchdennett/hugo-s3-deploy/service/route53"
 	s3Service "github.com/mitchdennett/hugo-s3-deploy/service/s3"
 	"github.com/pelletier/go-toml"
 )
@@ -61,12 +62,12 @@ func main() {
 	if !bucketExists {
 		fmt.Println("Requesting Cert....")
 		fmt.Println("=================================")
-		//cert.Request(sess)
-		//resourceRecord := cert.DescribeCertificate()
+		cert.Request(sess)
+		resourceRecord := cert.DescribeCertificate()
 
 		fmt.Println("Inserting Cert DNS Verification")
 		fmt.Println("=================================")
-		//route53.InsertNewRecord(sess, cert, resourceRecord)
+		route53.InsertNewRecord(sess, cert, resourceRecord)
 
 		fmt.Println("Setting Bucket Policy....")
 		fmt.Println("=================================")
@@ -78,11 +79,11 @@ func main() {
 
 		fmt.Println("Creating CloudFront Distribution....")
 		fmt.Println("=================================")
-		//dist.CreateDistribution()
+		dist.CreateDistribution()
 
 		fmt.Println("Adding CloudFront Domain To DNS....")
 		fmt.Println("=================================")
-		//route53.ChangeHostedZoneRecord(dist.DomainName, sess, domainName, hostedZoneId)
+		route53.ChangeHostedZoneRecord(dist.DomainName, sess, domainName, hostedZoneId)
 	}
 
 	fmt.Println("Building Hugo Site....")
