@@ -1,6 +1,15 @@
 # Hugo S3 Deploy CLI Tool
 This Go program sets up everything you need to host a Hugo site on S3. First it creates a new S3 Bucket and enables it for Web Hosting. Then it requests a Certificate from Amazon Certificate Manager and then automatically inserts the CNAME record into your Route 53 hosted zone so the certificate can verify you own the domain. Next it creates a CloudFront distribution to sit in front of your S3 bucket and updates your Hosted Zone again to point to the CloudFront distribution. After that it builds your Hugo site and uploads it to your S3 bucket. The only thing it doesn't do is set your SSL certificate on the CloudFront Distribution. (It could do this automatically but the Certificate verification can take a while sometimes eg. > 30 mins.)
 
+## Prerequisite
+
+You need to have your domain name with Route53 and have a hosted zone set up. You'll need a IAM User with the following policies:
+
++ AmazonS3FullAccess
++ CloudFrontFullAccess
++ AmazonRoute53FullAccess
++ AWSCertificateManagerFullAccess
+
 ## Installation
 
 To install, download this repository and then run the `go build -o hugo-s3-deploy` command. After that move the resulting binary to somewhere on your PATH so you can run it as a command line tool. 
