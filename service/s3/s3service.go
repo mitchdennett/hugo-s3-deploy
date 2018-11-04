@@ -175,6 +175,11 @@ func (bucket *S3Bucket) UploadFile(bucketPrefix string, filePath string, dirPath
 }
 
 func getFileContentType(filePath string) string {
+
+	if strings.HasSuffix(filePath, ".css") {
+		return "text/css"
+	}
+
 	out, err := os.Open(filePath)
 	if err != nil {
 		fmt.Println("Failed to open file", out, err)
@@ -183,7 +188,7 @@ func getFileContentType(filePath string) string {
 	defer out.Close()
 
 	// Only the first 512 bytes are used to sniff the content type.
-	buffer := make([]byte, 512)
+	buffer := make([]byte, 1024)
 
 	_, readErr := out.Read(buffer)
 	if readErr != nil {

@@ -96,7 +96,7 @@ func main() {
 }
 
 func buildHugoSite(dir string) {
-	cmd := exec.Command("hugo", "-t", "uilite", "-D")
+	cmd := exec.Command("hugo", "-t", "hugo-universal-theme")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
